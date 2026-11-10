@@ -361,9 +361,14 @@ async function post(path, body) {
 let backend = null;
 const local = new LocalEngine();
 const ENGINE_NOTE = "The coach server is off, so moves come from the in-browser engine: Stockfish's strength limiter plays the shades in place of the measured bots, and purple's top shades are the unthrottled engine. Sessions save in this browser only.";
-const probe = post("/still_moves", { fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", nodes: 20000 })
-  .then(() => { backend = "server"; })
-  .catch(() => { backend = "browser"; $("server-note").textContent = ENGINE_NOTE; $("server-note").hidden = false; $("lead-engine").textContent = " Moves come from the in-browser engine while the coach server is off."; local.init(); });
+// On a public host (Kit, 10 Nov) the page never looks for a coach server: it plays on the in-browser engine at once
+// and says nothing about a server, so a visitor sees only the game. On Kit's laptop the probe and the note stay.
+const HOSTED = !["localhost", "127.0.0.1", "[::1]", ""].includes(location.hostname);
+const probe = HOSTED
+  ? Promise.resolve().then(() => { backend = "browser"; local.init(); })
+  : post("/still_moves", { fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", nodes: 20000 })
+    .then(() => { backend = "server"; })
+    .catch(() => { backend = "browser"; $("server-note").textContent = ENGINE_NOTE; $("server-note").hidden = false; $("lead-engine").textContent = " Moves come from the in-browser engine while the coach server is off."; local.init(); });
 const stillMoves = (fen, nodes, bestNodes) => backend === "browser" ? local.moves(fen) : post("/still_moves", { fen, ...(nodes ? { nodes } : {}), ...(bestNodes ? { best_nodes: bestNodes } : {}) });
 const stillReply = (fen, elo) => backend === "browser" ? local.reply(fen, elo) : post("/still_reply", { fen, elo });
 const stillBot = (moves, bandObj) => backend === "browser" ? local.bot(moves, bandObj.strength) : post("/still_bot", { moves, bot: bandObj.bot });
@@ -676,7 +681,7 @@ class Game {
       }
       return r.moves;
     });
-    this.pending.catch((e) => { $("hint").textContent = "The coach server did not answer. Is it running on 5318?"; console.error(e); });
+    this.pending.catch((e) => { $("hint").textContent = backend === "browser" ? "The chess engine did not answer. Reload the page." : "The coach server did not answer. Is it running on 5318?"; console.error(e); });
   }
 
   // The press: a one-second pause, the piece moves, then the bars and numbers update.
@@ -714,7 +719,7 @@ class Game {
 
   async engineMove(side) {
     this.busy = true;
-    let reply; try { reply = await stillReply(this.chess.fen(), this.opts.elo); } catch (e) { $("hint").textContent = "The coach server did not answer. Is it running on 5318?"; console.error(e); return; }
+    let reply; try { reply = await stillReply(this.chess.fen(), this.opts.elo); } catch (e) { $("hint").textContent = backend === "browser" ? "The chess engine did not answer. Reload the page." : "The coach server did not answer. Is it running on 5318?"; console.error(e); return; }
     if (this.over || reply.over) return;
     this.stopClock(); if (this.clock.mode === "inc") this.clock[side] += this.clock.inc;
     const mv = this.chess.move(reply.san); const landed = await this.animate(mv);
@@ -870,7 +875,7 @@ function review(s0, game) {
   $("review-title").textContent = s.winner === null ? "Draw" : s.duo ? `${sessionLabel(s, s.winner)} won` : (s.players[s.winner] ? "You won" : "You lost");
   const ratingText = s.synthetic ? "Synthetic session, ratings unchanged."
     : humans.map((side) => { const p = s.players[side]; return `${s.duo ? p.name : "Rating"} ${p.ratingBefore} to ${p.ratingAfter}${p.rdAfter ? ` (give or take ${p.rdAfter})` : ""}.`; }).join(" ");
-  $("review-line").textContent = `${s.line} ${ratingText}${s.engine === "browser" ? " Moves came from the in-browser engine, with Stockfish's strength limiter in place of the measured bots." : ""}`;
+  $("review-line").textContent = `${s.line} ${ratingText}${s.engine === "browser" && !HOSTED ? " Moves came from the in-browser engine, with Stockfish's strength limiter in place of the measured bots." : ""}`;
   const card = (k, v, sub) => `<div class="num"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="s">${esc(sub)}</div></div>`;
   let html = "";
   for (const side of humans) {
